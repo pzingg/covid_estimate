@@ -1,59 +1,63 @@
 library(dplyr)
 library(growthrates)
 library(ggplot2)
+library(lubridate)
+library(tidyverse)
 
-bar_plot <- function(data, title, log_y = FALSE) {
-  scale_y <- ifelse(log_y, scale_y_log10, scale_y_continuous)
-  ggplot(data, aes(x = data$dates)) +
-    geom_point(aes(y = data$cases), colour = "black", shape = "circle filled", size = 5, stroke = 2) +
-    geom_col(aes(y = data$y), colour = "red", alpha = 0.3, width = 0.75) +
-    scale_x_date(date_labels = "%m/%d") +
-    scale_y(labels = function(n) { format(n, big.mark = ",", scientific = FALSE) }) +
-    labs(x = "Date", y = "USA Predicted Cases") +
-    ggtitle(title)
-}
+# Source: https://github.com/CSSEGISandData/COVID-19. Checked every night:
+confirmed_global_url <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv"
+file_name <- "time_series_covid19_confirmed_global.csv"
+download.file(confirmed_global_url, file_name, "wget", quiet = FALSE, cacheOK = FALSE)
 
-# Source: CNN. Checked every evening at
-# https://www.cnn.com/2020/03/03/health/us-coronavirus-cases-state-by-state/index.html
-cases_since_march_1 <- c(
-     89,   105,   125,   159,   227,   331,   444,   564,   728,  1000, # 3/1 to 3/10
-   1267,  1587,  2131,  2795,  3482,  4158,  5748,  8736, 13229, 16520  # 3/11 to 3/20
-)
-len <- length(cases_since_march_1)
+confirmed_global <- read_csv(file_name)
+confirmed_us <- confirmed_global %>% filter(`Country/Region` == "US") %>% unlist()
+len <- length(confirmed_us)
+cases <- confirmed_us[5:len] %>% as.double()
+reliable <- cases
+dates <- names(confirmed_us)[5:len] %>% parse_date_time(orders = "mdy") %>% as.Date()
 
-# Starting date in March 2020 to do analysis on
-start_date <- 14
-
+# Number of days of recent data to use
+use_days <- 15L
 # Number of days to predict and plot
-num_days <- 32
+num_days <- use_days + 7L
 
-reliable_cases <- cases_since_march_1
-if (start_date > 1) {
-  reliable_cases[1:(start_date - 1)] <- NA
-}
 covid <- data.frame(
-  time = seq_along(cases_since_march_1),
-  cases = cases_since_march_1,
-  reliable = reliable_cases
-)
+  cases = cases,
+  dates = dates
+) %>% tail(use_days)
+covid$time <- seq_along(covid$cases)
 
 # Defaults for fit_easylinear are h = 5, quota = 0.95
 # Using a smaller h value generally results in a higher mumax
 # (growth rate), because of lack of testing in early days.
-fit <- fit_easylinear(covid$time, covid$reliable)
+fit <- fit_easylinear(covid$time, covid$cases)
 est <- predict(fit, newdata = list(time = 1:num_days))
 est <- full_join(covid, est, by = "time")
 est$y <- round(est$y)
-est$dates <- seq(as.Date("2020-03-01"), by = "days", length = num_days)
+est$dates <- seq(est$dates[[1]], by = "days", length.out = num_days)
 
 mu <- fit@par["mumax"]
 names(mu) <- NULL
 percent_increase <- (exp(mu) - 1.0) * 100.0
 doubling_time <- log(2.0) / mu
+most_recent_cases <- covid[nrow(covid),]$cases
+most_recent_date <- covid[nrow(covid),]$dates
 title <- paste0(
   "COVID-19 estimates\n",
-  "mumax = ", round(mu, digits = 2), "\n",
-  "daily percentage increase = ", round(percent_increase, digits = 2), "\n",
-  "doubling time in days = ", round(doubling_time, digits = 2))
+  "most recent data: ", format(most_recent_cases, big.mark = ",", scientific = FALSE), " cases on ", most_recent_date, "\n",
+  "mumax: ", round(mu, digits = 2), "\n",
+  "daily percentage increase: ", round(percent_increase, digits = 2), "\n",
+  "doubling time in days: ", round(doubling_time, digits = 2))
 
-# bar_plot(est, title)
+bar_plot <- function(data, title, log_y = FALSE) {
+  scale_y <- ifelse(log_y, scale_y_log10, scale_y_continuous)
+  ggplot(data, aes(x = dates)) +
+    geom_point(aes(y = cases), colour = "black", shape = "circle filled", size = 5, stroke = 2) +
+    geom_col(aes(y = y), colour = "red", alpha = 0.3) +
+    scale_y(labels = function(n) { format(n, big.mark = ",", scientific = FALSE) }) +
+    labs(x = "Date", y = "USA Predicted Cases") +
+    ggtitle(title)
+}
+
+bar_plot(est, title)
+ggsave("covid_plot.png", device = "png")
