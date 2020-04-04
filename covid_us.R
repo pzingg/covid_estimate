@@ -60,4 +60,4 @@ bar_plot <- function(data, title, log_y = FALSE) {
 }
 
 bar_plot(est, title)
-ggsave("covid_plot.png", device = "png")
+ggsave("covid_us.png", device = "png")
